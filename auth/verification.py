@@ -4,6 +4,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from database.connection import get_connection
+from auth.security import create_setup_token
 
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
@@ -22,7 +23,6 @@ def verify_email(request: VerificationRequest):
     try:
         with conn.cursor() as cursor:
 
-            # Find the user by email
             cursor.execute(
                 """
                 SELECT id, is_verified, verification_code,
@@ -43,28 +43,24 @@ def verify_email(request: VerificationRequest):
 
             user_id, is_verified, verification_code, expires_at = user
 
-            # Check if email is already verified
             if is_verified:
                 raise HTTPException(
                     status_code=400,
                     detail="Email is already verified."
                 )
 
-            # Check verification code
             if verification_code != request.code:
                 raise HTTPException(
                     status_code=400,
                     detail="Invalid verification code."
                 )
 
-            # Check whether the code has expired
             if expires_at is None or expires_at <= datetime.now(timezone.utc):
                 raise HTTPException(
                     status_code=400,
                     detail="Verification code has expired."
                 )
 
-            # Mark email as verified
             cursor.execute(
                 """
                 UPDATE users
@@ -82,6 +78,9 @@ def verify_email(request: VerificationRequest):
     finally:
         conn.close()
 
+    setup_token = create_setup_token(user_id)
+
     return {
-        "message": "Email verified successfully."
+        "message": "Email verified successfully.",
+        "setup_token": setup_token,
     }
