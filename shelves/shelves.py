@@ -723,14 +723,6 @@ def update_shelf_thresholds(
             user_id,
         )
 
-        role = membership[1]
-
-        if role != "ADMIN":
-            raise HTTPException(
-                status_code=403,
-                detail="Only organisation admins can update shelf thresholds.",
-            )
-
         # -----------------------------
         # Validate threshold ranges
         # -----------------------------
@@ -859,7 +851,147 @@ def update_shelf_thresholds(
 
     finally:
         connection.close()
+# ============================================================
+# UPDATE DEVICE SERIAL NUMBER
+# ============================================================
 
+@router.put("/{site_id}/shelves/{shelf_id}/device")
+def update_device_serial_number(
+    site_id: int,
+    shelf_id: int,
+    device_serial_number: str,
+    user_id: int = Depends(get_current_user_id),
+):
+    connection = get_connection()
+
+    try:
+        # ----------------------------------------------------
+        # Check organisation membership
+        # ----------------------------------------------------
+
+        membership = check_site_admin_or_staff(
+            connection,
+            site_id,
+            user_id,
+        )
+
+        # ----------------------------------------------------
+        # Admin only
+        # ----------------------------------------------------
+
+        if membership[1] != "ADMIN":
+            raise HTTPException(
+                status_code=403,
+                detail="Only organisation admins can manage devices.",
+            )
+
+        # ----------------------------------------------------
+        # Validate serial number
+        # ----------------------------------------------------
+
+        device_serial_number = device_serial_number.strip()
+
+        if not device_serial_number:
+            raise HTTPException(
+                status_code=400,
+                detail="Device serial number is required.",
+            )
+
+        cursor = connection.cursor()
+
+        # ----------------------------------------------------
+        # Check that shelf exists
+        # ----------------------------------------------------
+
+        cursor.execute(
+            """
+            SELECT
+                id,
+                site_id,
+                name,
+                device_serial_number
+            FROM shelves
+            WHERE id = %s
+              AND site_id = %s
+            """,
+            (
+                shelf_id,
+                site_id,
+            ),
+        )
+
+        shelf = cursor.fetchone()
+
+        if not shelf:
+            cursor.close()
+
+            raise HTTPException(
+                status_code=404,
+                detail="Shelf not found.",
+            )
+
+        # ----------------------------------------------------
+        # Update device serial number
+        # ----------------------------------------------------
+
+        cursor.execute(
+            """
+            UPDATE shelves
+            SET
+                device_serial_number = %s,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = %s
+              AND site_id = %s
+            RETURNING
+                id,
+                site_id,
+                name,
+                device_serial_number,
+                updated_at
+            """,
+            (
+                device_serial_number,
+                shelf_id,
+                site_id,
+            ),
+        )
+
+        updated_shelf = cursor.fetchone()
+
+        connection.commit()
+
+        cursor.close()
+
+        # ----------------------------------------------------
+        # Return updated device information
+        # ----------------------------------------------------
+
+        return {
+            "message": "Device serial number updated successfully.",
+            "device": {
+                "shelf_id": updated_shelf[0],
+                "site_id": updated_shelf[1],
+                "shelf_name": updated_shelf[2],
+                "device_serial_number": updated_shelf[3],
+                "updated_at": updated_shelf[4],
+            },
+        }
+
+    except HTTPException:
+        connection.rollback()
+        raise
+
+    except Exception as e:
+        connection.rollback()
+
+        raise HTTPException(
+            status_code=500,
+            detail=f"Unable to update device serial number: {str(e)}",
+        )
+
+    finally:
+        connection.close()
+        
 # ============================================================
 # DELETE SHELF
 # ============================================================

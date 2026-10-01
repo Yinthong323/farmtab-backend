@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-
+from datetime import date, datetime
 from auth.security import verify_access_token
 from database.connection import get_connection
 from .schemas import CreateSensorReadingRequest
@@ -337,11 +337,37 @@ def get_latest_sensor_reading(
 def get_sensor_readings(
     site_id: int,
     shelf_id: int,
+    start_date: date | None = None,
+    end_date: date | None = None,
+    interval_minutes: int = 10,
     user_id: int = Depends(get_current_user_id),
 ):
     connection = get_connection()
 
     try:
+        # ----------------------------------------------------
+        # Validate interval
+        # ----------------------------------------------------
+
+        allowed_intervals = {
+            5,
+            10,
+            15,
+            30,
+            60,
+            360,
+            1440,
+        }
+
+        if interval_minutes not in allowed_intervals:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Invalid interval. "
+                    "Allowed values: 5, 10, 15, 30, 60, 360, 1440 minutes."
+                ),
+            )
+
         # ----------------------------------------------------
         # Check shelf access
         # ----------------------------------------------------
@@ -379,42 +405,110 @@ def get_sensor_readings(
             )
 
         # ----------------------------------------------------
-        # Get readings
+        # Default date range
+        #
+        # If no date range is provided:
+        # use the most recent 24 hours.
+        # ----------------------------------------------------
+
+        if start_date is None and end_date is None:
+            cursor.execute(
+                """
+                SELECT
+                    MIN(recorded_at::date),
+                    MAX(recorded_at::date)
+                FROM sensor_readings
+                WHERE shelf_id = %s
+                """,
+                (shelf_id,),
+            )
+
+            date_range = cursor.fetchone()
+
+            if date_range and date_range[0] is not None:
+                start_date = date_range[0]
+                end_date = date_range[1]
+            else:
+                cursor.close()
+                return []
+
+        elif start_date is None:
+            start_date = end_date
+
+        elif end_date is None:
+            end_date = start_date
+
+        # ----------------------------------------------------
+        # Validate date range
+        # ----------------------------------------------------
+
+        if start_date > end_date:
+            cursor.close()
+
+            raise HTTPException(
+                status_code=400,
+                detail="start_date cannot be later than end_date.",
+            )
+
+        # ----------------------------------------------------
+        # Get averaged readings
         # ----------------------------------------------------
 
         cursor.execute(
             """
             SELECT
-                id,
-                shelf_id,
+            date_bin(
+                %s * INTERVAL '1 minute',
                 recorded_at,
-                ph,
-                ec,
-                orp,
-                temperature
+                TIMESTAMPTZ '2000-01-01 00:00:00+00'
+            ) AS interval_start,
+
+                AVG(ph) AS ph,
+                AVG(ec) AS ec,
+                AVG(orp) AS orp,
+                AVG(temperature) AS temperature
+
             FROM sensor_readings
+
             WHERE shelf_id = %s
-            ORDER BY recorded_at DESC
+
+              AND recorded_at >= %s::date
+
+              AND recorded_at <
+                  (%s::date + INTERVAL '1 day')
+
+            GROUP BY interval_start
+
+            ORDER BY interval_start ASC
             """,
-            (shelf_id,),
+            (
+                interval_minutes,
+                shelf_id,
+                start_date,
+                end_date,
+            ),
         )
 
         rows = cursor.fetchall()
 
         cursor.close()
 
-        columns = [
-            "id",
-            "shelf_id",
-            "recorded_at",
-            "ph",
-            "ec",
-            "orp",
-            "temperature",
-        ]
+        # ----------------------------------------------------
+        # Return averaged readings
+        # ----------------------------------------------------
 
         return [
-            dict(zip(columns, row))
+            {
+                "recorded_at": row[0],
+                "ph": float(row[1]) if row[1] is not None else None,
+                "ec": float(row[2]) if row[2] is not None else None,
+                "orp": float(row[3]) if row[3] is not None else None,
+                "temperature": (
+                    float(row[4])
+                    if row[4] is not None
+                    else None
+                ),
+            }
             for row in rows
         ]
 
