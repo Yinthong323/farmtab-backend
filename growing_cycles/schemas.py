@@ -25,3 +25,6 @@ class GrowingCycleResponse(BaseModel):
 
 class StopGrowingCycleRequest(BaseModel):
     stop_reason: str | None = None
+
+class UpdateGrowingCycleDaysRequest(BaseModel):
+    target_harvest_days: int

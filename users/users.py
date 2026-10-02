@@ -2,12 +2,12 @@ import os
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from pydantic import BaseModel
 
 from database.connection import get_connection
 from auth.dependencies import get_current_user_id
-
+from auth.security import verify_password, hash_password
 from users.schemas import UserProfileResponse, UpdateProfileRequest
-
 
 router = APIRouter(
     prefix="/users",
@@ -65,6 +65,280 @@ def get_current_user(
     finally:
         connection.close()
 
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+@router.post("/me/change-password")
+def change_password(
+    request: ChangePasswordRequest,
+    user_id: int = Depends(get_current_user_id),
+):
+    conn = get_connection()
+
+    try:
+        cursor = conn.cursor()
+
+        cursor.execute(
+            "SELECT password_hash FROM users WHERE id = %s",
+            (user_id,),
+        )
+
+        user = cursor.fetchone()
+
+        if not user:
+            raise HTTPException(
+                status_code=404,
+                detail="User not found.",
+            )
+
+        current_password_hash = user[0]
+
+        if not verify_password(
+            request.current_password,
+            current_password_hash,
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="Current password is incorrect.",
+            )
+
+        if len(request.new_password) < 8:
+            raise HTTPException(
+                status_code=400,
+                detail="New password must be at least 8 characters.",
+            )
+
+        if request.current_password == request.new_password:
+            raise HTTPException(
+                status_code=400,
+                detail="New password must be different from the current password.",
+            )
+
+        new_password_hash = hash_password(request.new_password)
+
+        cursor.execute(
+            """
+            UPDATE users
+            SET password_hash = %s
+            WHERE id = %s
+            """,
+            (new_password_hash, user_id),
+        )
+
+        conn.commit()
+
+        return {
+            "message": "Password changed successfully."
+        }
+
+    finally:
+        cursor.close()
+        conn.close()
+
+# ============================================================
+# CHANGE PASSWORD
+# ============================================================
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+
+@router.post("/me/change-password")
+def change_password(
+    request: ChangePasswordRequest,
+    user_id: int = Depends(get_current_user_id),
+):
+    connection = get_connection()
+
+    try:
+        cursor = connection.cursor()
+
+        cursor.execute(
+            """
+            SELECT password_hash
+            FROM users
+            WHERE id = %s
+            """,
+            (user_id,),
+        )
+
+        user = cursor.fetchone()
+
+        if not user:
+            raise HTTPException(
+                status_code=404,
+                detail="User not found.",
+            )
+
+        current_password_hash = user[0]
+
+        # Verify current password
+        if not verify_password(
+            request.current_password,
+            current_password_hash,
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="Current password is incorrect.",
+            )
+
+        # Validate new password
+        if len(request.new_password) < 8:
+            raise HTTPException(
+                status_code=400,
+                detail="New password must be at least 8 characters.",
+            )
+
+        if request.current_password == request.new_password:
+            raise HTTPException(
+                status_code=400,
+                detail="New password must be different from the current password.",
+            )
+
+        # Hash new password
+        new_password_hash = hash_password(
+            request.new_password
+        )
+
+        cursor.execute(
+            """
+            UPDATE users
+            SET password_hash = %s
+            WHERE id = %s
+            """,
+            (
+                new_password_hash,
+                user_id,
+            ),
+        )
+
+        connection.commit()
+        cursor.close()
+
+        return {
+            "message": "Password changed successfully."
+        }
+
+    except HTTPException:
+        connection.rollback()
+        raise
+
+    except Exception as e:
+        connection.rollback()
+
+        raise HTTPException(
+            status_code=500,
+            detail=f"Unable to change password: {str(e)}",
+        )
+
+    finally:
+        connection.close()
+
+# ============================================================
+# DELETE ACCOUNT
+# ============================================================
+
+@router.delete("/me")
+def delete_account(
+    user_id: int = Depends(get_current_user_id),
+):
+    connection = get_connection()
+
+    try:
+        cursor = connection.cursor()
+
+        # ----------------------------------------------------
+        # Check whether the user is the only approved ADMIN
+        # of any organisation.
+        # ----------------------------------------------------
+        cursor.execute(
+            """
+            SELECT
+                om.organisation_id,
+                o.name
+            FROM organisation_members om
+            JOIN organisations o
+                ON o.id = om.organisation_id
+            WHERE om.user_id = %s
+              AND om.role = 'ADMIN'
+              AND om.membership_status = 'APPROVED'
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM organisation_members other_admin
+                  WHERE other_admin.organisation_id = om.organisation_id
+                    AND other_admin.user_id != %s
+                    AND other_admin.role = 'ADMIN'
+                    AND other_admin.membership_status = 'APPROVED'
+              )
+            """,
+            (user_id, user_id),
+        )
+
+        admin_organisations = cursor.fetchall()
+
+        if admin_organisations:
+            organisation_names = [
+                row[1] for row in admin_organisations
+            ]
+
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "You cannot delete your account because you are "
+                    "the only approved ADMIN of: "
+                    + ", ".join(organisation_names)
+                    + ". Please assign another approved ADMIN first."
+                ),
+            )
+
+        # ----------------------------------------------------
+        # Delete the user.
+        #
+        # organisation_members.user_id has ON DELETE CASCADE,
+        # so the user's membership records will automatically
+        # be removed.
+        # ----------------------------------------------------
+        cursor.execute(
+            """
+            DELETE FROM users
+            WHERE id = %s
+            RETURNING id
+            """,
+            (user_id,),
+        )
+
+        deleted_user = cursor.fetchone()
+
+        if not deleted_user:
+            raise HTTPException(
+                status_code=404,
+                detail="User not found.",
+            )
+
+        connection.commit()
+
+        cursor.close()
+
+        return {
+            "message": "Account deleted successfully."
+        }
+
+    except HTTPException:
+        connection.rollback()
+        raise
+
+    except Exception as e:
+        connection.rollback()
+
+        raise HTTPException(
+            status_code=500,
+            detail=f"Unable to delete account: {str(e)}",
+        )
+
+    finally:
+        connection.close()
 
 # ============================================================
 # UPDATE PROFILE

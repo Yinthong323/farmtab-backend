@@ -10,6 +10,7 @@ from .schemas import (
     GrowingCycleResponse,
     CreateGrowingCycleRequest,
     StopGrowingCycleRequest,
+    UpdateGrowingCycleDaysRequest,
 )
 
 
@@ -419,6 +420,173 @@ def get_growing_cycles(
 
     finally:
         connection.close()
+
+# ============================================================
+# UPDATE TARGET HARVEST DAYS
+# ============================================================
+
+@router.put(
+    "/{site_id}/shelves/{shelf_id}/growing-cycles/{cycle_id}/target-days",
+    response_model=GrowingCycleResponse,
+)
+def update_growing_cycle_days(
+    site_id: int,
+    shelf_id: int,
+    cycle_id: int,
+    request: UpdateGrowingCycleDaysRequest,
+    user_id: int = Depends(get_current_user_id),
+):
+    connection = get_connection()
+
+    try:
+        (
+            shelf_id_result,
+            actual_site_id,
+            crop_type,
+            role,
+        ) = _get_shelf_and_membership(
+            connection,
+            shelf_id,
+            user_id,
+        )
+
+        # ----------------------------------------------------
+        # Check site
+        # ----------------------------------------------------
+
+        if actual_site_id != site_id:
+            raise HTTPException(
+                status_code=404,
+                detail="Shelf does not belong to this site.",
+            )
+
+        # ----------------------------------------------------
+        # Only Admin can edit growing cycle
+        # ----------------------------------------------------
+
+        if role != "ADMIN":
+            raise HTTPException(
+                status_code=403,
+                detail="Only organisation admins can edit a growing cycle.",
+            )
+
+        # ----------------------------------------------------
+        # Validate target days
+        # ----------------------------------------------------
+
+        if request.target_harvest_days < 1:
+            raise HTTPException(
+                status_code=400,
+                detail="Target harvest days must be at least 1 day.",
+            )
+
+        # ----------------------------------------------------
+        # Find active cycle
+        # ----------------------------------------------------
+
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT
+                    id,
+                    start_date,
+                    status
+                FROM growing_cycles
+                WHERE id = %s
+                  AND shelf_id = %s
+                """,
+                (
+                    cycle_id,
+                    shelf_id,
+                ),
+            )
+
+            cycle = cursor.fetchone()
+
+            if cycle is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Growing cycle not found.",
+                )
+
+            cycle_id_db, start_date, status = cycle
+
+            # ------------------------------------------------
+            # Only active cycle can be edited
+            # ------------------------------------------------
+
+            if status != "ACTIVE":
+                raise HTTPException(
+                    status_code=400,
+                    detail="Only an active growing cycle can be edited.",
+                )
+
+            # ------------------------------------------------
+            # Recalculate target harvest date
+            # ------------------------------------------------
+
+            target_harvest_date = (
+                start_date
+                + timedelta(
+                    days=request.target_harvest_days
+                )
+            )
+
+            # ------------------------------------------------
+            # Update cycle
+            # ------------------------------------------------
+
+            cursor.execute(
+                """
+                UPDATE growing_cycles
+                SET
+                    target_harvest_days = %s,
+                    target_harvest_date = %s,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = %s
+                RETURNING
+                    id,
+                    shelf_id,
+                    cycle_number,
+                    crop_type,
+                    start_date,
+                    target_harvest_days,
+                    target_harvest_date,
+                    actual_harvest_date,
+                    actual_growth_days,
+                    status,
+                    stop_reason,
+                    created_at,
+                    updated_at
+                """,
+                (
+                    request.target_harvest_days,
+                    target_harvest_date,
+                    cycle_id_db,
+                ),
+            )
+
+            row = cursor.fetchone()
+
+            connection.commit()
+
+        return _build_cycle_response(row)
+
+    except HTTPException:
+        connection.rollback()
+        raise
+
+    except Exception as e:
+        connection.rollback()
+
+        raise HTTPException(
+            status_code=500,
+            detail=str(e),
+        )
+
+    finally:
+        connection.close()
+
 
 @router.put(
     "/{site_id}/shelves/{shelf_id}/growing-cycles/{cycle_id}/stop",
