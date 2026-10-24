@@ -1,17 +1,16 @@
 import json
 import random
 import time
-
+import os
 import paho.mqtt.client as mqtt
 
 
-MQTT_BROKER = "localhost"
+MQTT_BROKER = os.getenv("MQTT_BROKER", "localhost")
 MQTT_PORT = 1883
 
 # We will use this shelf for testing.
-SHELF_ID = 2
-
-MQTT_TOPIC = f"farmtab/shelves/{SHELF_ID}/sensor"
+DEVICE_SERIAL = "qwert"
+MQTT_TOPIC = f"farmtab/devices/{DEVICE_SERIAL}/sensor"
 
 client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
 
