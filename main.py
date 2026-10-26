@@ -24,6 +24,8 @@ from users.users import router as users_router
 from layers.layers import router as layers_router
 from layers.cycles import router as layer_cycles_router
 from layers.harvest import router as layer_harvest_router
+from assistant.assistant import router as assistant_router
+from assistant.conversations import router as conversations_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -101,3 +103,5 @@ app.include_router(users_router)
 app.include_router(layers_router)
 app.include_router(layer_cycles_router)
 app.include_router(layer_harvest_router)
+app.include_router(assistant_router)
+app.include_router(conversations_router)

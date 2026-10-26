@@ -31,3 +31,4 @@ websockets==17.1
 Pillow
 opencv-python-headless
 numpy
+google-genai
