@@ -22,6 +22,8 @@ from devices import devices
 from notifications.notifications import router as notifications_router
 from users.users import router as users_router
 from layers.layers import router as layers_router
+from layers.cycles import router as layer_cycles_router
+from layers.harvest import router as layer_harvest_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -97,3 +99,5 @@ app.include_router(devices.router)
 app.include_router(notifications_router)
 app.include_router(users_router)
 app.include_router(layers_router)
+app.include_router(layer_cycles_router)
+app.include_router(layer_harvest_router)
