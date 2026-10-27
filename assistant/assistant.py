@@ -53,7 +53,7 @@ PROVIDER = os.getenv("AI_PROVIDER", "gemini").strip().lower()
 # "high demand" (503) or times out (504). The names must be models your key can
 # use; list them with the test command from the setup notes. Model names change
 # often: if you get "model not available", change these in backend/.env.
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
 GEMINI_FALLBACK_MODELS = [
     m.strip()
     for m in os.getenv(
