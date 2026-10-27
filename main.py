@@ -26,6 +26,7 @@ from layers.cycles import router as layer_cycles_router
 from layers.harvest import router as layer_harvest_router
 from assistant.assistant import router as assistant_router
 from assistant.conversations import router as conversations_router
+from device_status.device_status import router as device_status_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -105,3 +106,4 @@ app.include_router(layer_cycles_router)
 app.include_router(layer_harvest_router)
 app.include_router(assistant_router)
 app.include_router(conversations_router)
+app.include_router(device_status_router)
